@@ -12,8 +12,7 @@ typedef OnSubscriptionResult<TParsed> = void Function(
   GraphQLClient? client,
 );
 
-typedef SubscriptionBuilder<TParsed> = Widget Function(
-    QueryResult<TParsed> result);
+typedef SubscriptionBuilder<TParsed> = Widget Function(QueryResult<TParsed> result);
 
 QueryResult<TParsed> useSubscription<TParsed>(
   SubscriptionOptions<TParsed> options, {
@@ -59,17 +58,15 @@ class _SubscriptionHook<TParsed> extends Hook<Stream<QueryResult<TParsed>>> {
     required this.onSubscriptionResult,
   });
   @override
-  HookState<Stream<QueryResult<TParsed>>, Hook<Stream<QueryResult<TParsed>>>>
-      createState() {
+  HookState<Stream<QueryResult<TParsed>>, Hook<Stream<QueryResult<TParsed>>>> createState() {
     return _SubscriptionHookState();
   }
 }
 
-class _SubscriptionHookState<TParsed> extends HookState<
-    Stream<QueryResult<TParsed>>, _SubscriptionHook<TParsed>> {
+class _SubscriptionHookState<TParsed> extends HookState<Stream<QueryResult<TParsed>>, _SubscriptionHook<TParsed>> {
   late Stream<QueryResult<TParsed>> stream;
 
-  bool _isOnline = false;
+  List<ConnectivityResult> _currentConnectivityResult = [ConnectivityResult.none];
   StreamSubscription<List<ConnectivityResult>>? _networkSubscription;
 
   void _initSubscription() {
@@ -88,8 +85,7 @@ class _SubscriptionHookState<TParsed> extends HookState<
   void initHook() {
     super.initHook();
     _initSubscription();
-    _networkSubscription =
-        Connectivity().onConnectivityChanged.listen(_onNetworkChange);
+    _networkSubscription = Connectivity().onConnectivityChanged.listen(_onNetworkChange);
   }
 
   @override
@@ -107,38 +103,30 @@ class _SubscriptionHookState<TParsed> extends HookState<
     super.dispose();
   }
 
-  Future<bool> _isConnected(List<ConnectivityResult> results) async {
-    if (results.any((result) => result == ConnectivityResult.none))
-      return false;
-
-    final isKnownConnection = !Platform.isAndroid &&
-        results.any((result) => [
-              ConnectivityResult.mobile,
-              ConnectivityResult.ethernet,
-              ConnectivityResult.wifi
-            ].contains(result));
-
-    if (!isKnownConnection) {
-      try {
-        final nsLookupResult = await InternetAddress.lookup('google.com');
-        if (nsLookupResult.isNotEmpty &&
-            nsLookupResult[0].rawAddress.isNotEmpty) {
-          return true;
-        }
-        // on exception -> no real connection, set current state to none
-      } on SocketException catch (_) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
   Future<void> _onNetworkChange(List<ConnectivityResult> results) async {
-    final wasOnline = _isOnline;
-    _isOnline = await _isConnected(results);
+    //if from offline to online
+    if (_currentConnectivityResult.contains(ConnectivityResult.none) &&
+        (results.contains(ConnectivityResult.mobile) || results.contains(ConnectivityResult.wifi))) {
+      _currentConnectivityResult = List.from(results, growable: false);
 
-    if (!wasOnline && _isOnline) _initSubscription();
+      // android connectivitystate cannot be trusted
+      // validate with nslookup
+      if (Platform.isAndroid) {
+        try {
+          final nsLookupResult = await InternetAddress.lookup('google.com');
+          if (nsLookupResult.isNotEmpty && nsLookupResult[0].rawAddress.isNotEmpty) {
+            _initSubscription();
+          }
+          // on exception -> no real connection, set current state to none
+        } on SocketException catch (_) {
+          _currentConnectivityResult = [ConnectivityResult.none];
+        }
+      } else {
+        _initSubscription();
+      }
+    } else {
+      _currentConnectivityResult = List.from(results, growable: false);
+    }
   }
 
   @override
