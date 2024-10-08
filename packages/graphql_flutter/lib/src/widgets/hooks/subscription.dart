@@ -69,8 +69,8 @@ class _SubscriptionHookState<TParsed> extends HookState<
     Stream<QueryResult<TParsed>>, _SubscriptionHook<TParsed>> {
   late Stream<QueryResult<TParsed>> stream;
 
-  ConnectivityResult? _currentConnectivityResult;
-  StreamSubscription<ConnectivityResult>? _networkSubscription;
+  bool _isOnline = false;
+  StreamSubscription<List<ConnectivityResult>>? _networkSubscription;
 
   void _initSubscription() {
     final client = hook.client;
@@ -107,32 +107,38 @@ class _SubscriptionHookState<TParsed> extends HookState<
     super.dispose();
   }
 
-  Future<void> _onNetworkChange(ConnectivityResult result) async {
-    //if from offline to online
-    if (_currentConnectivityResult == ConnectivityResult.none &&
-        (result == ConnectivityResult.mobile ||
-            result == ConnectivityResult.wifi)) {
-      _currentConnectivityResult = result;
+  Future<bool> _isConnected(List<ConnectivityResult> results) async {
+    if (results.any((result) => result == ConnectivityResult.none))
+      return false;
 
-      // android connectivitystate cannot be trusted
-      // validate with nslookup
-      if (Platform.isAndroid) {
-        try {
-          final nsLookupResult = await InternetAddress.lookup('google.com');
-          if (nsLookupResult.isNotEmpty &&
-              nsLookupResult[0].rawAddress.isNotEmpty) {
-            _initSubscription();
-          }
-          // on exception -> no real connection, set current state to none
-        } on SocketException catch (_) {
-          _currentConnectivityResult = ConnectivityResult.none;
+    final isKnownConnection = !Platform.isAndroid &&
+        results.any((result) => [
+              ConnectivityResult.mobile,
+              ConnectivityResult.ethernet,
+              ConnectivityResult.wifi
+            ].contains(result));
+
+    if (!isKnownConnection) {
+      try {
+        final nsLookupResult = await InternetAddress.lookup('google.com');
+        if (nsLookupResult.isNotEmpty &&
+            nsLookupResult[0].rawAddress.isNotEmpty) {
+          return true;
         }
-      } else {
-        _initSubscription();
+        // on exception -> no real connection, set current state to none
+      } on SocketException catch (_) {
+        return false;
       }
-    } else {
-      _currentConnectivityResult = result;
     }
+
+    return true;
+  }
+
+  Future<void> _onNetworkChange(List<ConnectivityResult> results) async {
+    final wasOnline = _isOnline;
+    _isOnline = await _isConnected(results);
+
+    if (!wasOnline && _isOnline) _initSubscription();
   }
 
   @override
